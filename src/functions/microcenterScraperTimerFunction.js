@@ -7,10 +7,18 @@ const { DefaultAzureCredential } = require("@azure/identity");
 const Readable = require('stream').Readable;
 const { EmailClient } = require("@azure/communication-email");
 
-app.http('httpTrigger1', {
+app.http('microcenterHttpEndpoint', {
   methods: ['GET', 'POST'],
   authLevel: 'anonymous',
   handler: async (request, context) => {
+    return await doWork();
+  },
+});
+
+
+app.timer('microcenterTimer', {
+  schedule: '0 */5 * * * *',
+  handler: async (myTimer, context) => {
     return await doWork();
   },
 });
@@ -23,7 +31,7 @@ async function doWork() {
   const differences = detectDifferences(previousData, currentData);
   if (typeof(differences) === 'string') return { body: differences }
   if (differences.length > 0) {
-    const emailResponse = await sendEmail(JSON.stringify(differences));
+    const emailResponse = await sendEmail(differences);
     if (typeof(emailResponse) === 'string') return { body: emailResponse }
     await persistNewData(currentData);
     console.log(JSON.stringify(differences));
@@ -31,15 +39,16 @@ async function doWork() {
   return { body: JSON.stringify(differences) };
 }
 
-async function sendEmail(data) {
+async function sendEmail(items) {
   try {
     const defaultCredential = new DefaultAzureCredential();
     const emailClient = new EmailClient('https://webscrapercommunicationservice.unitedstates.communication.azure.com', defaultCredential);
+    const messageHtml = getEmailHtml(items);
     const message = {
       senderAddress: "DoNotReply@e1e6baa5-a1fa-4cd7-bf09-b9c2edd46f24.azurecomm.net",
       content: {
         subject: "Microcenter OpenBox Discount Change",
-        plainText: data,
+        html: messageHtml,
       },
       recipients: {
         to: [
@@ -58,6 +67,17 @@ async function sendEmail(data) {
     console.error(`Error in sendEmail: ${exception}`);
     return `Error in sendEmail: ${exception.message}`;
   }
+}
+
+function getEmailHtml(items) {
+  var html = "<table border='1' style=\"border-collapse:collapse;\">";
+  html = html.concat("<th>Item</th><th>Price</th><th>Prev Price</th><th>Orig Price</th>");
+  items.forEach(item => {
+    const itemString = `<tr><td><img width=\"120px\" src=\"${item.image}\"/><br clear=\"all\"/><a href=\"${item.url}\">${item.name}</a></td><td><b>$${item.price}</b></td><td>$${item.oldPrice}</td><td>$${item.originalPrice}</td></tr>`;
+    html = html.concat(itemString);
+  });
+  html = html.concat("</table>");
+  return html;
 }
 
 function detectDifferences(previousData, currentData) {
@@ -174,11 +194,15 @@ function listProducts(document) {
 
   productItems.forEach(item => {
     // Extract relevant product information (adjust selectors as needed)
-    const productName = item.querySelector('[data-list="Search Results"]').getAttribute('data-name');
+    const product = item.querySelector('[data-list="Search Results"]');
+    const productName = product.getAttribute('data-name');
+    const productUrl = product.getAttribute('href');
+    const productImage = item.querySelector('.SearchResultProductImage').getAttribute('src');
     const productPriceNode = item.querySelector('.price-label');
     const productPrice = productPriceNode.firstElementChild.textContent.replace('$', '');
+    const productOriginalPrice = item.querySelector('.ObStrike').textContent;
     // Extract other details like image, description, etc.
-    const listItem = { name: productName, price: Number(productPrice) };
+    const listItem = { name: productName, price: Number(productPrice), image: productImage, originalPrice: Number(productOriginalPrice), url: "https://www.microcenter.com" + productUrl };
     productList.push(listItem);
   });
 
