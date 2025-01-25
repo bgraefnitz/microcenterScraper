@@ -16,10 +16,12 @@ app.http('microcenterHttpEndpoint', {
 });
 
 app.http('microcenterSnoozeHttpEndpoint', {
-  methods: ['POST'],
+  methods: ['GET'],
   authLevel: 'anonymous',
+  route: 'microcenterSnoozeHttpEndpoint/{id:int?}',
   handler: async (request, context) => {
-    return await snooze(request);
+    const id = request.params.id;
+    return await snooze(id);
   },
 });
 
@@ -30,22 +32,19 @@ app.timer('microcenterTimer', {
   },
 });
 
-async function snooze(request) {
-  const id = await request.json();
-  if (Number.isInteger(id)) {
-    try {
-      const previousData = await getPreviousData("snooze.json");
-      if (previousData.includes(id)) {
-        return { body: `item with id ${id} had already been snoozed` };
-      } else {
-        previousData.push(id);
-        await persistNewData(previousData, "snooze.json");
-        return { body: `item with id ${id} snoozed` };
-      }
-    } catch (exception) {
-      console.error(`Error in snooze: ${exception}`);
-      return { body: `Error in snooze: ${exception.message}`};
+async function snooze(id) {
+  try {
+    const previousData = await getPreviousData("snooze.json");
+    if (previousData.includes(id)) {
+      return { body: `item with id ${id} had already been snoozed` };
+    } else {
+      previousData.push(id);
+      await persistNewData(previousData, "snooze.json");
+      return { body: `item with id ${id} snoozed` };
     }
+  } catch (exception) {
+    console.error(`Error in snooze: ${exception}`);
+    return { body: `Error in snooze: ${exception.message}`};
   }
 }
 
@@ -54,7 +53,7 @@ async function doWork() {
   if (typeof(previousData) === 'string') return { body: previousData }
   const currentData = await getCurrentData('https://www.microcenter.com/search/search_results.aspx?N=4294964290&prt=clearance&NTK=all&sortby=pricehigh');
   if (typeof(currentData) === 'string') return { body: currentData }
-  const differences = detectDifferences(previousData, currentData);
+  const differences = await detectDifferences(previousData, currentData);
   if (typeof(differences) === 'string') return { body: differences }
   if (differences.length > 0) {
     const emailResponse = await sendEmail(differences);
@@ -97,31 +96,35 @@ async function sendEmail(items) {
 
 function getEmailHtml(items) {
   var html = "<table border='1' style=\"border-collapse:collapse;\">";
-  html = html.concat("<th>Item</th><th>Price</th><th>Prev Price</th><th>Orig Price</th>");
+  html = html.concat("<th>Item</th><th>Price</th><th>Prev Price</th><th>Orig Price</th><th>Ignore</th>");
   items.forEach(item => {
-    const itemString = `<tr><td><img width=\"120px\" src=\"${item.image}\"/><br clear=\"all\"/><a href=\"${item.url}\">${item.name}</a></td><td><b>$${item.price}</b></td><td>$${item.oldPrice}</td><td>$${item.originalPrice}</td></tr>`;
+    const ignoreUrl = "https://webscrapingbdg.azurewebsites.net/api/microcenterSnoozeHttpEndpoint/".concat(item.id);
+    const itemString = `<tr><td><img width=\"120px\" src=\"${item.image}\"/><br clear=\"all\"/><a href=\"${item.url}\">${item.name}</a></td><td><b>$${item.price}</b></td><td>$${item.oldPrice}</td><td>$${item.originalPrice}</td><td><a href=\"${ignoreUrl}\">Ignore</a></td></tr>`;
     html = html.concat(itemString);
   });
   html = html.concat("</table>");
   return html;
 }
 
-function detectDifferences(previousData, currentData) {
+async function detectDifferences(previousData, currentData) {
   const differences = []
   try {
-  currentData.forEach(currentItem => {
-    const matchingPreviousItem = previousData.filter(previousItem => {return previousItem.name === currentItem.name});
-    if (!matchingPreviousItem || matchingPreviousItem.length === 0) differences.push(currentItem);
-    if (matchingPreviousItem && matchingPreviousItem.length > 0 && currentItem.price < matchingPreviousItem[0].price) {
-      currentItem.oldPrice = matchingPreviousItem[0].price;
-      differences.push(currentItem);
-    }
-  });
-  return differences;
-} catch (exception) {
-  console.error(`Error in detectDifferences: ${exception}`);
-  return `Error in detectDifferences: ${exception.message}`;
-}
+    const ignoreData = await getPreviousData("snooze.json");
+    currentData.forEach(currentItem => {
+      if (!ignoreData.includes(currentItem.id)) {
+        const matchingPreviousItem = previousData.filter(previousItem => {return previousItem.name === currentItem.name});
+        if (!matchingPreviousItem || matchingPreviousItem.length === 0) differences.push(currentItem);
+        if (matchingPreviousItem && matchingPreviousItem.length > 0 && currentItem.price < matchingPreviousItem[0].price) {
+          currentItem.oldPrice = matchingPreviousItem[0].price;
+          differences.push(currentItem);
+        }
+      }
+    });
+    return differences;
+  } catch (exception) {
+    console.error(`Error in detectDifferences: ${exception}`);
+    return `Error in detectDifferences: ${exception.message}`;
+  }
 }
 
 async function persistNewData(data, filename = "data.json") {
@@ -222,13 +225,14 @@ function listProducts(document) {
     // Extract relevant product information (adjust selectors as needed)
     const product = item.querySelector('[data-list="Search Results"]');
     const productName = product.getAttribute('data-name');
+    const productId = product.getAttribute('data-id');
     const productUrl = product.getAttribute('href');
     const productImage = item.querySelector('.SearchResultProductImage').getAttribute('src');
     const productPriceNode = item.querySelector('.price-label');
     const productPrice = productPriceNode.firstElementChild.textContent.replace('$', '');
     const productOriginalPrice = item.querySelector('.ObStrike').textContent;
     // Extract other details like image, description, etc.
-    const listItem = { name: productName, price: Number(productPrice), image: productImage, originalPrice: Number(productOriginalPrice), url: "https://www.microcenter.com" + productUrl };
+    const listItem = { name: productName, id: productId, price: Number(productPrice), image: productImage, originalPrice: Number(productOriginalPrice), url: "https://www.microcenter.com" + productUrl };
     productList.push(listItem);
   });
 
