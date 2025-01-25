@@ -8,13 +8,20 @@ const Readable = require('stream').Readable;
 const { EmailClient } = require("@azure/communication-email");
 
 app.http('microcenterHttpEndpoint', {
-  methods: ['GET', 'POST'],
+  methods: ['GET'],
   authLevel: 'anonymous',
   handler: async (request, context) => {
     return await doWork();
   },
 });
 
+app.http('microcenterSnoozeHttpEndpoint', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  handler: async (request, context) => {
+    return await snooze(request);
+  },
+});
 
 app.timer('microcenterTimer', {
   schedule: '0 */5 * * * *',
@@ -22,6 +29,25 @@ app.timer('microcenterTimer', {
     return await doWork();
   },
 });
+
+async function snooze(request) {
+  const id = await request.json();
+  if (Number.isInteger(id)) {
+    try {
+      const previousData = await getPreviousData("snooze.json");
+      if (previousData.includes(id)) {
+        return { body: `item with id ${id} had already been snoozed` };
+      } else {
+        previousData.push(id);
+        await persistNewData(previousData, "snooze.json");
+        return { body: `item with id ${id} snoozed` };
+      }
+    } catch (exception) {
+      console.error(`Error in snooze: ${exception}`);
+      return { body: `Error in snooze: ${exception.message}`};
+    }
+  }
+}
 
 async function doWork() {
   const previousData = await getPreviousData();
@@ -98,12 +124,12 @@ function detectDifferences(previousData, currentData) {
 }
 }
 
-async function persistNewData(data) {
+async function persistNewData(data, filename = "data.json") {
   try {
     const defaultCredential = new DefaultAzureCredential();
     const blobClient = new BlobServiceClient('https://webscrapingb98b.blob.core.windows.net', defaultCredential);
     const container = blobClient.getContainerClient("app-package-microcenter-d9c0f45");
-    const blockBlob = container.getBlockBlobClient("data.json");
+    const blockBlob = container.getBlockBlobClient(filename);
     const dataStream = getStream(JSON.stringify(data));
     await blockBlob.uploadStream(dataStream);
     return;
@@ -121,12 +147,12 @@ function getStream(textData) {
   return s;
 }
 
-async function getPreviousData() {
+async function getPreviousData(filename = "data.json") {
   try {
     const defaultCredential = new DefaultAzureCredential();
     const blobClient = new BlobServiceClient('https://webscrapingb98b.blob.core.windows.net', defaultCredential);
     const container = blobClient.getContainerClient("app-package-microcenter-d9c0f45");
-    const file = container.getBlobClient("data.json");
+    const file = container.getBlobClient(filename);
     const data = await file.download();
     const downloadedData = await streamToBuffer(data.readableStreamBody);
     const previousData = downloadedData.toString();
