@@ -51,7 +51,7 @@ async function snooze(id) {
 async function doWork() {
   const previousData = await getPreviousData();
   if (typeof(previousData) === 'string') return { body: previousData }
-  const currentData = await getCurrentData('https://www.microcenter.com/search/search_results.aspx?N=4294964290&prt=clearance&NTK=all&sortby=pricehigh');
+  const currentData = await getCurrentData('https://www.microcenter.com/search/search_results.aspx?N=4294964290&prt=clearance&NTK=all&sortby=pricehigh&rpp=96');
   if (typeof(currentData) === 'string') return { body: currentData }
   const differences = await detectDifferences(previousData, currentData);
   if (typeof(differences) === 'string') return { body: differences }
