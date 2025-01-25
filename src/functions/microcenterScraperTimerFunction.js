@@ -58,17 +58,36 @@ async function doWork() {
   if (differences.length > 0) {
     const emailResponse = await sendEmail(differences);
     if (typeof(emailResponse) === 'string') return { body: emailResponse }
-    await persistNewData(currentData);
+    const newPersistedData = mergeChanges(previousData, differences);
+    await persistNewData(newPersistedData);
     console.log(JSON.stringify(differences));
   }
   return { body: JSON.stringify(differences) };
+}
+
+function mergeChanges(previousData, differences) {
+  differences.forEach(difference => {
+    const matchingPreviousItem = previousData.filter(previousItem => {return previousItem.name === difference.name});
+    // if wasn't in previous it is new, push it as a difference
+    if (!matchingPreviousItem || matchingPreviousItem.length === 0) {
+      difference.changeTimestamp = Date.now();
+      previousData.push(difference);
+    }
+    // if it was in previous but now has lower price, update price
+    if (matchingPreviousItem && matchingPreviousItem.length > 0 && difference.price < matchingPreviousItem[0].price) {
+      matchingPreviousItem[0].price = difference.price;
+      matchingPreviousItem[0].changeTimestamp = Date.now();
+    }
+  });
+
+  return previousData;
 }
 
 async function sendEmail(items) {
   try {
     const defaultCredential = new DefaultAzureCredential();
     const emailClient = new EmailClient('https://webscrapercommunicationservice.unitedstates.communication.azure.com', defaultCredential);
-    const messageHtml = getEmailHtml(items);
+    const messageHtml = getHtml(items);
     const message = {
       senderAddress: "DoNotReply@e1e6baa5-a1fa-4cd7-bf09-b9c2edd46f24.azurecomm.net",
       content: {
@@ -94,7 +113,7 @@ async function sendEmail(items) {
   }
 }
 
-function getEmailHtml(items) {
+function getHtml(items) {
   var html = "<table border='1' style=\"border-collapse:collapse;\">";
   html = html.concat("<th>Item</th><th>Price</th><th>Prev Price</th><th>Orig Price</th><th>Ignore</th>");
   items.forEach(item => {
@@ -113,13 +132,18 @@ async function detectDifferences(previousData, currentData) {
     currentData.forEach(currentItem => {
       if (!ignoreData.includes(currentItem.id)) {
         const matchingPreviousItem = previousData.filter(previousItem => {return previousItem.name === currentItem.name});
-        if (!matchingPreviousItem || matchingPreviousItem.length === 0) differences.push(currentItem);
+        // if wasn't in previous it is new, push it as a difference
+        if (!matchingPreviousItem || matchingPreviousItem.length === 0) {
+          differences.push(currentItem);
+        }
+        // if it was in previous but now has lower price, push it as a difference and update price
         if (matchingPreviousItem && matchingPreviousItem.length > 0 && currentItem.price < matchingPreviousItem[0].price) {
           currentItem.oldPrice = matchingPreviousItem[0].price;
           differences.push(currentItem);
         }
       }
     });
+    // add any items that were in previous but not in current to current so that we have price history
     return differences;
   } catch (exception) {
     console.error(`Error in detectDifferences: ${exception}`);
